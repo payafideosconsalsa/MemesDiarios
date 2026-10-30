@@ -2,38 +2,33 @@
 import json
 import os
 import urllib.request
-import urllib.error
 from pathlib import Path
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 CHANNEL = os.environ["CHANNEL_ID"]
+HISTORY = Path("publicados.json")
 
-HISTORY_FILE = Path("publicados.json")
-SUBREDDITS = ["memes", "dankmemes"]
+history = json.loads(HISTORY.read_text()) if HISTORY.exists() else []
 
-if HISTORY_FILE.exists():
-    history = json.loads(HISTORY_FILE.read_text())
-else:
-    history = []
-
-def get_reddit_posts(subreddit):
-    url = f"https://www.reddit.com/r/{subreddit}/new.json?limit=50"
+def get_memes():
+    url = "https://meme-api.com/gimme/20"
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "MemesDiarios/1.0"}
     )
-    with urllib.request.urlopen(req, timeout=20) as response:
-        return json.loads(response.read())["data"]["children"]
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return json.loads(response.read()).get("memes", [])
 
-def publish(image_url, post_url):
+def publish(meme):
     url = f"https://discord.com/api/v10/channels/{CHANNEL}/messages"
-    data = json.dumps({
-        "content": image_url + "\n" + post_url
+
+    payload = json.dumps({
+        "content": meme["url"] + "\n" + meme["postLink"]
     }).encode()
 
     req = urllib.request.Request(
         url,
-        data=data,
+        data=payload,
         headers={
             "Authorization": f"Bot {TOKEN}",
             "Content-Type": "application/json"
@@ -41,35 +36,24 @@ def publish(image_url, post_url):
         method="POST"
     )
 
-    with urllib.request.urlopen(req, timeout=20) as response:
-        print("Meme publicado:", response.status)
+    with urllib.request.urlopen(req, timeout=30) as response:
+        print("Publicado correctamente:", response.status)
 
-for subreddit in SUBREDDITS:
-    try:
-        posts = get_reddit_posts(subreddit)
+memes = get_memes()
 
-        for item in posts:
-            post = item["data"]
-            post_id = post["id"]
-            image = post.get("url_overridden_by_dest", "")
+for meme in memes:
+    if meme.get("nsfw") or meme.get("spoiler"):
+        continue
 
-            if (
-                post_id not in history
-                and post.get("post_hint") == "image"
-                and image.lower().split("?")[0].endswith(
-                    (".jpg", ".jpeg", ".png", ".gif")
-                )
-            ):
-                publish(image, "https://reddit.com" + post["permalink"])
-                history.append(post_id)
-                HISTORY_FILE.write_text(
-                    json.dumps(history[-500:])
-                )
-                raise SystemExit(0)
+    post_id = meme.get("postLink")
+    image = meme.get("url", "").lower().split("?")[0]
 
-    except SystemExit:
-        raise
-    except Exception as error:
-        print("Error en", subreddit, error)
-
-raise SystemExit("No se encontró un meme nuevo con imagen.")
+    if post_id and post_id not in history and image.endswith(
+        (".jpg", ".jpeg", ".png", ".gif")
+    ):
+        publish(meme)
+        history.append(post_id)
+        HISTORY.write_text(json.dumps(history[-500:]))
+        break
+else:
+    raise SystemExit("No se encontró un meme nuevo.")
