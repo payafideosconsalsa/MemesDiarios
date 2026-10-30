@@ -1,29 +1,47 @@
-
 import json
 import os
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 CHANNEL = os.environ["CHANNEL_ID"]
 HISTORY = Path("publicados.json")
+FEED = "https://jaidefinichon.com/feed/"
 
 history = json.loads(HISTORY.read_text()) if HISTORY.exists() else []
 
-def get_memes():
-    url = "https://meme-api.com/gimme/20"
+def get_posts():
     req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "MemesDiarios/1.0"}
+        FEED,
+        headers={"User-Agent": "Mozilla/5.0"}
     )
-    with urllib.request.urlopen(req, timeout=30) as response:
-        return json.loads(response.read()).get("memes", [])
 
-def publish(meme):
+    with urllib.request.urlopen(req, timeout=30) as response:
+        xml = response.read()
+
+    root = ET.fromstring(xml)
+    posts = []
+
+    for item in root.findall(".//item"):
+        link = item.findtext("link")
+        title = item.findtext("title")
+        description = item.findtext("description") or ""
+
+        if link:
+            posts.append({
+                "link": link,
+                "title": title or "Nuevo meme",
+                "description": description
+            })
+
+    return posts
+
+def publish(post):
     url = f"https://discord.com/api/v10/channels/{CHANNEL}/messages"
 
     payload = json.dumps({
-        "content": meme["url"] + "\n" + meme["postLink"]
+        "content": f'**{post["title"]}**\n{post["link"]}'
     }).encode()
 
     req = urllib.request.Request(
@@ -37,23 +55,15 @@ def publish(meme):
     )
 
     with urllib.request.urlopen(req, timeout=30) as response:
-        print("Publicado correctamente:", response.status)
+        print("Publicado:", response.status)
 
-memes = get_memes()
+posts = get_posts()
 
-for meme in memes:
-    if meme.get("nsfw") or meme.get("spoiler"):
-        continue
-
-    post_id = meme.get("postLink")
-    image = meme.get("url", "").lower().split("?")[0]
-
-    if post_id and post_id not in history and image.endswith(
-        (".jpg", ".jpeg", ".png", ".gif")
-    ):
-        publish(meme)
-        history.append(post_id)
+for post in posts:
+    if post["link"] not in history:
+        publish(post)
+        history.append(post["link"])
         HISTORY.write_text(json.dumps(history[-500:]))
         break
 else:
-    raise SystemExit("No se encontró un meme nuevo.")
+    raise SystemExit("No hay publicaciones nuevas.")
